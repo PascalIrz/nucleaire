@@ -1,0 +1,153 @@
+---
+title: "Nucléaire militaire"
+author: "Elucid"
+date: "2025-03-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Chargement des packages et données
+
+## Packages
+
+```{r}
+library(tidyverse)
+```
+
+## Données
+
+Les données sont chargées depus le fichier Excel fourni par Olivier et les variables sont renommées pour être plus faciles à manipuler.
+
+```{r}
+data <- readxl::read_xlsx("../raw_data/Intérêt.xlsx")
+
+data <- data %>% 
+  set_names("pays",
+            "pays_code",
+            "possede_ou_a_possede_bombe",
+            "prog_nucl",
+            "pop",
+            "surf",
+            "pib",
+            "pib_ppa",
+            "pib_par_hab_ppa",
+            "prix_scientif",
+            "nucleaire_civil",
+            "membre_otan_ou_eq_pre_1990",
+            "membre_otan_2025",
+            "danger_frontieres",
+            "interet_politique"
+            )
+```
+
+## Un peu de mise en forme pour les graphiques
+
+On en profite pour distinguer les variables par catégorie : quantitative, discrète ou binaire, ce qui permet ensuite de les représenter graphiquement de manière appropriée.
+
+```{r}
+data_long <- data %>%
+  pivot_longer(
+    cols = !starts_with("pays"),
+    names_to = "variable",
+    values_to = "valeur"
+  ) %>%
+  mutate(
+    type_variable = case_when(
+      variable %in% c(
+        "possede_ou_a_possede_bombe",
+        "prog_nucl",
+        "nucleaire_civil",
+        "membre_otan_ou_eq_pre_1990",
+        "membre_otan_2025",
+        "interet_politique") ~ "booleene",
+      variable %in% c("prix_scientif",
+                      "danger_frontieres") ~ "discrete",
+      TRUE ~ "quantitative"),
+    valeur = ifelse(is.na(valeur), 0 , valeur)
+  )
+```
+
+# Analyses univariées
+
+## Distributions
+
+### Variables quantitatives
+
+```{r}
+data_long %>% 
+  filter(type_variable == "quantitative") %>% 
+  ggplot(aes(x = valeur)) +
+    geom_histogram() +
+    facet_wrap(~variable, scales = "free") +
+  labs(x = "valeur", 
+       y = "nombre de pays")
+```
+
+On beaucoup de valeurs faibles et quelques valeurs très élevées $\Rightarrow$ test en log_transformant les variables.
+
+```{r}
+data_long %>% 
+  filter(type_variable == "quantitative") %>% 
+  ggplot(aes(x = valeur)) +
+    geom_histogram() +
+    facet_wrap(~variable, scales = "free") +
+  labs(x = "valeur", 
+       y = "nombre de pays") +
+  scale_x_log10()
+```
+
+En vue de la modélisation, pour approcher des distributions gaussiennes, on retiendra des valeurs log-transformées.
+
+### Variables discrètes
+
+```{r}
+data_long %>% 
+  filter(type_variable == "discrete") %>% 
+  ggplot(aes(x = valeur)) +
+    geom_histogram() +
+    facet_wrap(~variable, scales = "free") +
+  labs(x = "valeur", 
+       y = "nombre de pays")
+```
+
+Distributions assez moches car beaucoup de valeurs nulles. A affiner.
+
+### Variables binaires
+
+```{r}
+data_long %>% 
+  filter(type_variable == "booleene") %>% 
+  ggplot(aes(x = valeur)) +
+    geom_bar() +
+    facet_wrap(~variable) +
+  labs(x = "valeur", 
+       y = "nombre de pays") +
+  scale_x_continuous(breaks = c(0, 1), labels = c("Non", "Oui"))
+```
+
+## Cartographie
+
+### Variables quantitatives
+
+### Variables discrètes
+
+### Variables binaires
+
+## Conclusions
+
+>A Verifier :
+
+>d'après le tableau, pas de nucléaire civil au RU ?
+
+>Pas de prix scientifiques en Chine, USA ou Russie ?
+
+# Relations bivariées
+
+Il va de soi que tous les pays dotés de la bombe se sont auparavant dotés de programmes nucléaires.
+
+
+
+On va s'intéresser aux relations entre les variables que l'on cherche à expliquer (le pays possède-t-il la bombe)
