@@ -15,6 +15,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 
 ```{r}
 library(tidyverse)
+library(corrplot)
 ```
 
 ## Données
@@ -24,8 +25,7 @@ Les données sont chargées depus le fichier Excel fourni par Olivier et les var
 ```{r}
 data <- readxl::read_xlsx("../raw_data/Intérêt.xlsx")
 
-data <- data %>% 
-  set_names("pays",
+var_names <- c("pays",
             "pays_code",
             "possede_ou_a_possede_bombe",
             "prog_nucl",
@@ -39,8 +39,14 @@ data <- data %>%
             "membre_otan_ou_eq_pre_1990",
             "membre_otan_2025",
             "danger_frontieres",
-            "interet_politique"
-            )
+            "interet_politique")
+
+data <- data %>% 
+  set_names(var_names)
+
+# pb de valeurs zéro dans pib_ppa (dans ce cas on observe pib_par_hab_ppa manquante) => transformations en NA
+data <- data %>% 
+  mutate(pib_ppa = ifelse(is.na(pib_par_hab_ppa), NA, pib_ppa))
 ```
 
 ## Un peu de mise en forme pour les graphiques
@@ -48,6 +54,23 @@ data <- data %>%
 On en profite pour distinguer les variables par catégorie : quantitative, discrète ou binaire, ce qui permet ensuite de les représenter graphiquement de manière appropriée.
 
 ```{r}
+var_booleenes <- c(
+  "possede_ou_a_possede_bombe",
+  "prog_nucl",
+  "nucleaire_civil",
+  "membre_otan_ou_eq_pre_1990",
+  "membre_otan_2025",
+  "interet_politique"
+)
+
+var_discretes <- c("prix_scientif",
+                   "danger_frontieres")
+
+var_quantitatives <-
+  setdiff(setdiff(var_names, c("pays", "pays_code")),
+          c(var_booleenes, var_discretes))
+
+
 data_long <- data %>%
   pivot_longer(
     cols = !starts_with("pays"),
@@ -56,16 +79,10 @@ data_long <- data %>%
   ) %>%
   mutate(
     type_variable = case_when(
-      variable %in% c(
-        "possede_ou_a_possede_bombe",
-        "prog_nucl",
-        "nucleaire_civil",
-        "membre_otan_ou_eq_pre_1990",
-        "membre_otan_2025",
-        "interet_politique") ~ "booleene",
-      variable %in% c("prix_scientif",
-                      "danger_frontieres") ~ "discrete",
-      TRUE ~ "quantitative"),
+      variable %in% var_booleenes ~ "booleene",
+      variable %in% var_discretes ~ "discrete",
+      TRUE ~ "quantitative"
+    ),
     valeur = ifelse(is.na(valeur), 0 , valeur)
   )
 ```
@@ -101,6 +118,30 @@ data_long %>%
 
 En vue de la modélisation, pour approcher des distributions gaussiennes, on retiendra des valeurs log-transformées.
 
+```{r}
+# transformation log sur data
+data <- data %>% 
+  mutate(across(.cols = var_quantitatives,
+                .fns = ~log(1 + .)))
+
+# on reconstruit data_long avec les valeurs log-transformées
+data_long <- data %>%
+  pivot_longer(
+    cols = !starts_with("pays"),
+    names_to = "variable",
+    values_to = "valeur"
+  ) %>%
+  mutate(
+    type_variable = case_when(
+      variable %in% var_booleenes ~ "booleene",
+      variable %in% var_discretes ~ "discrete",
+      TRUE ~ "quantitative"
+    ),
+    valeur = ifelse(is.na(valeur), 0 , valeur)
+  )
+```
+
+
 ### Variables discrètes
 
 ```{r}
@@ -130,7 +171,8 @@ data_long %>%
 
 ## Cartographie
 
-### Variables quantitatives
+
+
 
 ### Variables discrètes
 
@@ -148,6 +190,77 @@ data_long %>%
 
 Il va de soi que tous les pays dotés de la bombe se sont auparavant dotés de programmes nucléaires.
 
+On va s'intéresser aux relations entre les variables prises deux à deux pour :
+
+- identifier de potentiels prédicteurs des variables que l'on cherche à expliquer (si le pays possède la bombe, s'il a développé un programme sur le nucléaire militaire).
+
+### Variables quantitatives
+
+Ci-dessous les pays pour lesquels il manque des données sont exclus (n = 10).
+
+```{r}
+correlations <- data %>% 
+  select(var_quantitatives) %>% 
+  na.omit() %>% # suppression des pays où il manque des données
+  mutate_all(.funs = ~log10(.)) %>% 
+  cor(use = "pairwise.complete.obs")
+
+corrplot.mixed(correlations, upper = "ellipse")
+```
+
+On a des corrélations positives et fortes entre *pib_ppa, pib* et *pop*, voire avec *surf*. Sans surprise *surf* et *pop* sont assez corrélés, les "grands" pays ayant en général des populations supérieures à celles des "petits" pays. La variable *pib_par_hab_ppa* est peu corrélée aux autres variables.
+
+## Variables quantitatives et qualitatives
+
+```{r}
+test <- data %>% 
+  select(pays_code, var_quantitatives) %>% 
+  pivot_longer(cols = -pays_code, names_to = "var_quant_nom", values_to = "var_quant_valeur")
+
+test2 <- data %>% 
+  select(pays_code, var_discretes, var_booleenes) %>% 
+  pivot_longer(cols = -pays_code, names_to = "var_qual_nom", values_to = "var_qual_valeur")
+
+croise <- expand.grid(var_quantitatives, c(var_discretes, var_booleenes), unique(data$pays_code)) %>% 
+  set_names("var_quant_nom", "var_qual_nom", "pays_code")
+
+test3 <- croise %>% 
+  left_join(y = test) %>% 
+  left_join(y = test2)
+```
 
 
-On va s'intéresser aux relations entre les variables que l'on cherche à expliquer (le pays possède-t-il la bombe)
+```{r}
+ggplot(data = test3,
+       aes(x = as.factor(var_qual_valeur),
+           y = var_quant_valeur)) +
+  geom_boxplot() +
+  facet_grid(var_quant_nom ~ var_qual_nom,
+             scales = "free") 
+```
+
+
+```{r}
+data %>% 
+  #filter(variable %in% c("possede_ou_a_possede_bombe", "pib_par_hab_ppa")) %>% 
+  mutate(possede_ou_a_possede_bombe = as.factor(possede_ou_a_possede_bombe)) %>% 
+  ggplot(aes(x = possede_ou_a_possede_bombe, y = pib_par_hab_ppa)) +
+  geom_boxplot()
+```
+
+```{r}
+var_qual <- "possede_ou_a_possede_bombe"
+var_quant <- "pib_par_hab_ppa"
+
+data_long %>% 
+  filter(variable %in% c(var_qual, var_quant)) %>%
+  mutate(var_qual = as.factor(var_qual)) %>% 
+  ggplot(aes(x = as.factor(var_qual), y = var_quant)) +
+  geom_boxplot()
+```
+```{r}
+mon_boxplot (df = data_long,
+             var_qual = possede_ou_a_possede_bombe,
+             var_quant = pib_par_hab_ppa)
+```
+
