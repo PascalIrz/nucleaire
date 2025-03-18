@@ -13,6 +13,10 @@ output:
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 ```
 
+# Objectif de l'étude
+
+80 % des pays n'ont pas acquis l'arme nucléaire. On vise à étudier si le choix arme/pas arme  peut s'expliquer de manière satisfaisante par certaines caractéristiques des pays.
+
 # Chargement des packages et données
 
 ## Packages
@@ -20,7 +24,18 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 ```{r}
 library(tidyverse)
 library(corrplot)
+library(lsr)
 ```
+
+## Fonctions "maison"
+
+Solution trouvée sur :
+https://stackoverflow.com/questions/52554336/plot-the-equivalent-of-correlation-matrix-for-factors-categorical-data-and-mi
+
+```{r}
+source(file = "../R/mon_chi2.R")
+```
+
 
 ## Données
 
@@ -97,7 +112,7 @@ data_long <- data %>%
 
 ### Variables quantitatives
 
-```{r}
+```{r, fig.cap="Distribution des variables quantitatives."}
 data_long %>% 
   filter(type_variable == "quantitative") %>% 
   ggplot(aes(x = valeur)) +
@@ -109,7 +124,7 @@ data_long %>%
 
 On beaucoup de valeurs faibles et quelques valeurs très élevées $\Rightarrow$ test en log_transformant les variables.
 
-```{r}
+```{r, fig.cap="Distribution des variables quantitatives après log-transformation."}
 data_long %>% 
   filter(type_variable == "quantitative") %>% 
   ggplot(aes(x = valeur)) +
@@ -148,7 +163,7 @@ data_long <- data %>%
 
 ### Variables discrètes
 
-```{r}
+```{r, fig.cap="Distribution des variables semi-quantitatives (discrètes)."}
 data_long %>% 
   filter(type_variable == "discrete") %>% 
   ggplot(aes(x = valeur)) +
@@ -162,7 +177,7 @@ Distributions assez moches car beaucoup de valeurs nulles. A affiner.
 
 ### Variables binaires
 
-```{r}
+```{r, fig.cap="Distribution des variables binaires."}
 data_long %>% 
   filter(type_variable == "booleene") %>% 
   ggplot(aes(x = valeur)) +
@@ -204,7 +219,7 @@ L'analyse repose sur des représentations graphiques qui dépendent de la nature
 
 Ci-dessous les pays pour lesquels il manque des données sont exclus (n = 10).
 
-```{r}
+```{r, fig.cap="Corrélations bivariées entre les variables quantitatives. Les variables ont été préalablement log-transformées et les pays pour des données manquantes ont été écartés."}
 correlations <- data %>% 
   select(var_quantitatives) %>% 
   na.omit() %>% # suppression des pays où il manque des données
@@ -214,7 +229,9 @@ correlations <- data %>%
 corrplot.mixed(correlations, upper = "ellipse")
 ```
 
-On a des corrélations positives et fortes entre *pib_ppa, pib* et *pop*, voire avec *surf*. Sans surprise *surf* et *pop* sont assez corrélés, les "grands" pays ayant en général des populations supérieures à celles des "petits" pays. La variable *pib_par_hab_ppa* est peu corrélée aux autres variables.
+On a des corrélations positives et fortes entre *pib_ppa, pib* et *pop*, voire avec *surf*. Sans surprise *surf* et *pop* sont assez corrélés, les "grands" pays ayant en général des populations supérieures à celles des "petits" pays. Parmi ce groupe de variables il faudra opérer un choix car elles sont trop corrélées pour être entrées simultanément dans le modèle.
+
+La variable *pib_par_hab_ppa* est peu corrélée aux autres variables.
 
 ## Variables quantitatives et qualitatives
 
@@ -241,18 +258,45 @@ test3 <- croise %>%
 ```
 
 
-```{r, fig.width=10}
+```{r, fig.width=10, fig.cap="Relations entre les variables quantitatives (log-transformées) et qualitatives."}
 ggplot(data = test3,
        aes(x = as.factor(var_qual_valeur),
            y = var_quant_valeur,
            fill = (var_qual_valeur == 1 & var_qual_nom == "possede_bombe"))) +
   geom_boxplot() +
   facet_grid(var_quant_nom ~ var_qual_nom,
-             scales = "free") +
+             scales = "free",
+             switch = "y") +
   labs(x = "", y = "") +
   scale_fill_manual(values = c("grey", "red")) +
   guides(fill = FALSE)
 ```
 
+Les pays dotés de la bombe se distinguent des autres avant tout par leur population (nombreuse) et leur PIB (élevé). La richesse par habitant est moins discriminante.
 
+## Variables binaires
+
+Solution trouvée sur :
+https://stackoverflow.com/questions/52554336/plot-the-equivalent-of-correlation-matrix-for-factors-categorical-data-and-mi
+
+
+```{r, fig.cap="Relation entre les variables binaires prises deux-à-deux. La valeur numérique indiquée dans chaque case est la statistique V de Cramer, homologue d'un coefficient de corrélation pour des variables quantitatives. Plus il est élevé plus l'association est forte. La couleur représente la p-value qui est la probabilité d'indépendance des variables. Le rouge indique que les variables sont liées statistiquement."}
+
+df <- data %>% 
+  select(var_booleenes) %>% 
+  mutate_all(~replace(., is.na(.), 0))
+
+df_comb <- data.frame(t(combn(sort(names(df)), 2)), stringsAsFactors = F)
+
+df_res <- map2_df(df_comb$X1, df_comb$X2, mon_chi2)
+
+df_res %>%
+  ggplot(aes(x,y,fill=chisq_pval))+
+  geom_tile()+
+  geom_text(aes(x,y,label=cramV))+
+  scale_fill_gradient(low="red", high="yellow")+
+  theme_classic() +
+  labs(x = "", y = "")
+
+```
 
