@@ -15,21 +15,23 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 
 # Objectif de l'étude
 
-80 % des pays n'ont pas acquis l'arme nucléaire. On vise à étudier si le choix arme/pas arme  peut s'expliquer de manière satisfaisante par certaines caractéristiques des pays.
+95 % des pays n'ont pas acquis l'arme nucléaire. On vise à étudier si le choix arme/pas arme  peut s'expliquer par modélisation de manière satisfaisante par certaines caractéristiques des pays.
+
+Comme seulement 10 des 223 pays de l'étude se sont dotés de la bombe, il faut un nombre faible de prédicteurs.
 
 # Chargement des packages et données
 
 ## Packages
 
 ```{r}
-library(tidyverse)
-library(corrplot)
-library(lsr)
+library(tidyverse) # manipulation des données
+library(corrplot) # graphique des corrélations
+library(lsr) # graphique du Chi2
 ```
 
 ## Fonctions "maison"
 
-Solution trouvée sur :
+Pour le test du $\chi²$ et sa visualisation graphique, la solution a été trouvée sur :
 https://stackoverflow.com/questions/52554336/plot-the-equivalent-of-correlation-matrix-for-factors-categorical-data-and-mi
 
 ```{r}
@@ -39,11 +41,19 @@ source(file = "../R/mon_chi2.R")
 
 ## Données
 
-Les données sont chargées depus le fichier Excel fourni par Olivier et les variables sont renommées pour être plus faciles à manipuler.
+Les données sont chargées depuis le fichier Excel fourni par [*Elucid*](www.elucid.media).
 
 ```{r}
 data <- readxl::read_xlsx("../raw_data/Intérêt.xlsx")
 
+prix <- readxl::read_xlsx("../raw_data/prix nucl.xlsx") %>% 
+  select(-1) %>% 
+  set_names("pays_code", "prix_scientif")
+```
+
+Les variables sont renommées pour être plus faciles à manipuler.
+
+```{r}
 var_names <- c("pays",
             "pays_code",
             "possede_bombe",
@@ -61,19 +71,24 @@ var_names <- c("pays",
             "interet_politique")
 
 data <- data %>% 
-  set_names(var_names)
+  set_names(var_names) %>% 
+  select(-prix_scientif) %>% 
+  inner_join(prix)
+```
 
-# pb de valeurs zéro dans pib_ppa (dans ce cas on observe pib_par_hab_ppa manquante) => transformations en NA
+Valeurs zéro dans pib_ppa (dans ce cas on observe pib_par_hab_ppa manquante) => transformations en valeurs manquantes.
+
+```{r}
 data <- data %>% 
   mutate(pib_ppa = ifelse(is.na(pib_par_hab_ppa), NA, pib_ppa))
 ```
 
 ## Un peu de mise en forme pour les graphiques
 
-On en profite pour distinguer les variables par catégorie : quantitative, discrète ou binaire, ce qui permet ensuite de les représenter graphiquement de manière appropriée.
+On en profite pour distinguer les variables par catégorie : quantitative, ordinale ou catégorielle, ce qui permet ensuite de les représenter graphiquement de manière appropriée. Les variables ordinales peuvent être considérées comme intermédiaires entre les variables quantitatives et catégorielles. Ici, les variables catégorielles n'ont que deux modalités (oui/non) donc elles sont binaires.
 
 ```{r}
-var_booleenes <- c(
+var_binaires <- c(
   "possede_bombe",
   "prog_nucl",
   "nucleaire_civil",
@@ -82,13 +97,12 @@ var_booleenes <- c(
   "interet_politique"
 )
 
-var_discretes <- c("prix_scientif",
+var_ordinales <- c("prix_scientif",
                    "danger_frontieres")
 
 var_quantitatives <-
   setdiff(setdiff(var_names, c("pays", "pays_code")),
-          c(var_booleenes, var_discretes))
-
+          c(var_binaires, var_ordinales))
 
 data_long <- data %>%
   pivot_longer(
@@ -98,8 +112,8 @@ data_long <- data %>%
   ) %>%
   mutate(
     type_variable = case_when(
-      variable %in% var_booleenes ~ "booleene",
-      variable %in% var_discretes ~ "discrete",
+      variable %in% var_binaires ~ "binaire",
+      variable %in% var_ordinales ~ "ordinale",
       TRUE ~ "quantitative"
     ),
     valeur = ifelse(is.na(valeur), 0 , valeur)
@@ -107,6 +121,10 @@ data_long <- data %>%
 ```
 
 # Analyses univariées
+
+On s'intéresse à la distribution de chacune des variables pour détecter d'éventuelles valeurs manquantes ou aberrantes et s'assurer qu'elles sont conformes aux exigences de la mdélisation (ex : distribution à peu près en cloche pour les variables quantitatives).
+
+On a ici trois types de variables : quantitatives (continues), discrètes (discontinues par exemple des nombres entiers) et qualitatives (oui/non).
 
 ## Distributions
 
@@ -152,8 +170,8 @@ data_long <- data %>%
   ) %>%
   mutate(
     type_variable = case_when(
-      variable %in% var_booleenes ~ "booleene",
-      variable %in% var_discretes ~ "discrete",
+      variable %in% var_binaires ~ "binaire",
+      variable %in% var_ordinales ~ "ordinale",
       TRUE ~ "quantitative"
     ),
     valeur = ifelse(is.na(valeur), 0 , valeur)
@@ -165,7 +183,7 @@ data_long <- data %>%
 
 ```{r, fig.cap="Distribution des variables semi-quantitatives (discrètes)."}
 data_long %>% 
-  filter(type_variable == "discrete") %>% 
+  filter(type_variable == "ordinale") %>% 
   ggplot(aes(x = valeur)) +
     geom_histogram() +
     facet_wrap(~variable, scales = "free") +
@@ -175,17 +193,21 @@ data_long %>%
 
 Distributions assez moches car beaucoup de valeurs nulles. A affiner.
 
-### Variables binaires
+### Variables qualitatives (binaires)
 
 ```{r, fig.cap="Distribution des variables binaires."}
 data_long %>% 
-  filter(type_variable == "booleene") %>% 
-  ggplot(aes(x = valeur)) +
+  filter(type_variable == "binaire") %>% 
+  mutate(variable = fct_relevel(variable, "possede_bombe", "prog_nucl", "nucleaire_civil")) %>% 
+  ggplot(aes(x = valeur,
+             fill = (valeur == 1 & variable == "possede_bombe"))) +
     geom_bar() +
     facet_wrap(~variable) +
   labs(x = "valeur", 
        y = "nombre de pays") +
-  scale_x_continuous(breaks = c(0, 1), labels = c("Non", "Oui"))
+  scale_x_continuous(breaks = c(0, 1), labels = c("Non", "Oui")) +
+  scale_fill_manual(values = c("grey", "red")) +
+  guides(fill = FALSE)
 ```
 
 ## Cartographie
@@ -215,16 +237,26 @@ On va s'intéresser aux relations entre les variables prises deux à deux pour :
 
 L'analyse repose sur des représentations graphiques qui dépendent de la nature des variables.
 
-### Variables quantitatives
+## Variables quantitatives
 
 Ci-dessous les pays pour lesquels il manque des données sont exclus (n = 10).
 
-```{r, fig.cap="Corrélations bivariées entre les variables quantitatives. Les variables ont été préalablement log-transformées et les pays pour des données manquantes ont été écartés."}
-correlations <- data %>% 
-  select(var_quantitatives) %>% 
+```{r, fig.width = 9, fig.height = 9, fig.cap="Corrélations bivariées entre les variables quantitatives. Les variables ont été préalablement log-transformées et les pays pour des données manquantes ont été écartés."}
+correlations_data1 <- data %>% 
+  select(pays_code, var_quantitatives) %>% 
   na.omit() %>% # suppression des pays où il manque des données
-  mutate_all(.funs = ~log10(.)) %>% 
+  mutate_if(is.numeric, .funs = ~log10(.)) 
+
+correlations_data2 <- data %>% 
+  select(pays_code, var_ordinales) %>% 
+  mutate_all(~ifelse(is.na(.), 0, .))
+
+correlations <- correlations_data1 %>% 
+  inner_join(correlations_data2) %>% 
+  select(-pays_code) %>% 
   cor(use = "pairwise.complete.obs")
+
+
 
 corrplot.mixed(correlations, upper = "ellipse")
 ```
@@ -237,17 +269,23 @@ La variable *pib_par_hab_ppa* est peu corrélée aux autres variables.
 
 ```{r}
 test <- data %>% 
-  select(pays_code, var_quantitatives) %>% 
+  select(pays_code, var_quantitatives, var_ordinales) %>% 
   pivot_longer(cols = -pays_code, names_to = "var_quant_nom", values_to = "var_quant_valeur")
 
 test2 <- data %>% 
-  select(pays_code, var_discretes, var_booleenes) %>% 
+  select(pays_code, var_binaires) %>% 
   mutate_all(~ifelse(is.na(.), 0, .)) %>% 
   pivot_longer(cols = -pays_code,
                names_to = "var_qual_nom",
                values_to = "var_qual_valeur")
 
-croise <- expand.grid(var_quantitatives, c(var_discretes, var_booleenes), unique(data$pays_code)) %>% 
+# croise <- expand.grid(var_quantitatives, c(var_ordinales, var_binaires),
+#                       unique(data$pays_code)) %>% 
+#   set_names("var_quant_nom", "var_qual_nom", "pays_code")
+
+croise <- expand.grid(c(var_quantitatives, var_ordinales),
+                      var_binaires,
+                      unique(data$pays_code)) %>%
   set_names("var_quant_nom", "var_qual_nom", "pays_code")
 
 test3 <- croise %>% 
@@ -283,20 +321,64 @@ https://stackoverflow.com/questions/52554336/plot-the-equivalent-of-correlation-
 ```{r, fig.cap="Relation entre les variables binaires prises deux-à-deux. La valeur numérique indiquée dans chaque case est la statistique V de Cramer, homologue d'un coefficient de corrélation pour des variables quantitatives. Plus il est élevé plus l'association est forte. La couleur représente la p-value qui est la probabilité d'indépendance des variables. Le rouge indique que les variables sont liées statistiquement."}
 
 df <- data %>% 
-  select(var_booleenes) %>% 
+  select(var_binaires) %>% 
   mutate_all(~replace(., is.na(.), 0))
 
 df_comb <- data.frame(t(combn(sort(names(df)), 2)), stringsAsFactors = F)
 
+df_comb2 <- df_comb %>% 
+  select(X2, X1) %>% 
+  set_names("X1", "X2")
+
+df_comb <- df_comb %>% 
+  rbind(df_comb2)
+
 df_res <- map2_df(df_comb$X1, df_comb$X2, mon_chi2)
 
 df_res %>%
+  mutate(x = fct_relevel(x, "possede_bombe", "prog_nucl", "nucleaire_civil"),
+         y = fct_relevel(y, "possede_bombe", "prog_nucl", "nucleaire_civil")) %>% 
   ggplot(aes(x,y,fill=chisq_pval))+
   geom_tile()+
   geom_text(aes(x,y,label=cramV))+
   scale_fill_gradient(low="red", high="yellow")+
   theme_classic() +
-  labs(x = "", y = "")
+ # theme(axis.text.x = (element_text(colour = (df_res$x == "possede_bombe")))) +
+  labs(x = "", y = "") +
+  geom_rect(aes(xmin = 0.5, xmax = 6.5, ymin = 0.5, ymax = 1.5),
+            col = "violet",
+            size = 3,
+            alpha = 0) +
+    geom_rect(aes(ymin = 0.5, ymax = 6.5, xmin = 0.5, xmax = 1.5),
+            col = "violet",
+            size = 3,
+            alpha = 0)
+
+```
+
+Le fait de posséder la bombe est principalement lié au fait d'avoir un programme nucléaire (quelle surprise !) et à la variable "intérêt politique".
+
+# Modélisation
+
+## Choix des variables explicatives
+
+### Variables quantitatives
+
+On a vu précédemment que l'on avait un groupe de variables décrivant la "taille" du pays (superficie, population, PIB) et une variable isolés, la PIB par habitant. La Figure 4.2 montre que le groupe lié à l'effet taille est lié à la possession de la bombe mais pas le PIB par habitant.
+
+On va retenir la population et le PIB qui sont les deux variables les moins corrélées du groupe (même si r = 0.81). Bien qu'en bivarié il ne soit pas lié à la possession de la bombe, on retient aussi le PIB par habitant car non corrélé à au groupe "taille"
+
+### Variables ordinales
+
+Les variables ordinales "prix scientifiques" et "dangers aux frontières" sont intéressantes car elles sont à la fois liéesà la possession de la bombe et pas trop corrélées aux variables quantitatives, donc on les conserve.
+
+### Variables qualitatives
+
+On retient la variable "intérêt politique" qui est liée au fait de posséder la bombe (V = 0.52). Bien que l'effet ne soit pas clair en bivarié, on peut retenir l'appartenance à l'OTAN en 1990.
+
+## Modèle initial
+
+```{r}
 
 ```
 
